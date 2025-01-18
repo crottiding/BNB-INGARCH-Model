@@ -1,0 +1,237 @@
+---
+title: "traffic accidents in NYC"
+author: "DDD"
+date: "2024-11-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+data <- read.csv("D:/NYC Accidents 2020.csv")
+
+
+data$CRASH.DATE <- as.Date(data$CRASH.DATE, format = "%Y/%m/%d")
+
+daily_borough_stats1 <- data %>%
+  filter(BOROUGH %in% c("BROOKLYN", "MANHATTAN")& CRASH.DATE >= as.Date("2020-04-01")) %>%  
+  group_by(CRASH.DATE, BOROUGH) %>%
+  summarise(traff_accids = n()) %>%  
+  pivot_wider(names_from = BOROUGH, values_from = traff_accids, values_fill = list(traff_accids = 0)) %>%  
+  arrange(CRASH.DATE)  
+
+print(daily_borough_stats1)
+
+# plot the data
+
+library(ggplot2)
+
+ggplot(daily_borough_stats1, aes(x = CRASH.DATE)) +
+  geom_line(aes(y = BROOKLYN, color = "Brooklyn")) +
+  geom_line(aes(y = MANHATTAN, color = "Manhattan")) +
+  labs(title = "Daily Traffic Accidents in Brooklyn and Manhattan",
+       x = "Date",
+       y = "Number of Traffic Accidents") +
+  scale_color_manual(values = c("Brooklyn" = "blue", "Manhattan" = "red")) +
+  theme_minimal()
+
+#Plot of counts series for the traffic accidents of brooklyn and manhattan counties
+
+# Plot for Brooklyn
+ggplot(daily_borough_stats1, aes(x = CRASH.DATE, y = BROOKLYN)) +
+  geom_line(color = "blue") +
+  labs(title = "Traffic Accidents in Brooklyn",
+       x = "Date",
+       y = "Number of Accidents") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for better readability
+
+# Plot for Manhattan
+ggplot(daily_borough_stats1, aes(x = CRASH.DATE, y = MANHATTAN)) +
+  geom_line(color = "red") +
+  labs(title = "Traffic Accidents in Manhattan",
+       x = "Date",
+       y = "Number of Accidents") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for better readability
+
+
+# find sample mean and variance for brooklyn and manhattan
+
+brooklyn_mean <- mean(daily_borough_stats1$BROOKLYN)
+brooklyn_var <- var(daily_borough_stats1$BROOKLYN)
+
+print(brooklyn_mean)
+print(brooklyn_var)
+
+manhattan_mean <- mean(daily_borough_stats1$MANHATTAN)
+manhattan_var <- var(daily_borough_stats1$MANHATTAN)
+
+print(manhattan_mean)
+```
+
+
+
+```{r}
+# Extract traffic accident data for Brooklyn and Manhattan
+Y_actual <- as.matrix(daily_borough_stats1[, c("BROOKLYN", "MANHATTAN")])
+
+# Function to calculate MLE
+bivariate_neg_binom_log_likelihood <- function(params, Y, n) {
+  # Extract parameters
+  delta <- matrix(params[1:2], nrow = 2)
+  A <- matrix(params[3:6], nrow = 2, byrow = TRUE)
+  B <- matrix(params[7:10], nrow = 2, byrow = TRUE)
+  mu_0 <- params[11]
+  P <- params[12]
+  
+  mu <- matrix(0, nrow = n, ncol = 2)  # Initialize conditional means
+  log_likelihood <- 0  # Initialize log-likelihood
+  
+  # Loop over time steps
+  for (t in 2:n) {
+    # Update conditional means
+    mu[t, ] <- delta + A %*% mu[t - 1, ] + B %*% Y[t - 1, ]
+    
+    # Initialize joint probability
+    joint_prob <- 0
+    for (k in 0:min(Y[t, 1], Y[t, 2])) {
+      # Compute p_x0, p_x1, and p_x2 with validity checks
+      p_x0 <- dnbinom(k, size = mu_0 * P / (1 - P), prob = P)
+  
+      
+      p_x1 <- dnbinom(Y[t, 1] - k, size = (mu[t, 1] - mu_0) * P / (1 - P), prob = P)
+
+      
+      p_x2 <- dnbinom(Y[t, 2] - k, size = (mu[t, 2] - mu_0) * P / (1 - P), prob = P)
+
+      
+      # Accumulate joint probability, ensuring no NA
+        joint_prob <- joint_prob + p_x0 * p_x1 * p_x2
+ 
+    }
+
+    
+    
+    # Add to log-likelihood, avoiding log(0)
+    log_likelihood <- log_likelihood + log(max(joint_prob, 1e-10))
+  }
+  
+  return(-log_likelihood)  # Negative log-likelihood for minimization
+}
+param_list <- list(
+  c(3.0, 1.0, 0.3, 0.1, 0.4, 0.3, 0.3, 0.2, 0.1, 0.2, 0.1, 0.3)
+)
+
+# 参数列表
+param_list <- list(
+  c(3.0, 1.0, 0.3, 0.1, 0.4, 0.3, 0.3, 0.2, 0.1, 0.2, 0.01, 0.3)
+)
+
+# 初始化参数和约束
+#lower <- c(0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01)
+#upper <- c(Inf, Inf, 1, 1, 1, 1, 1, 1, 1, 1, 10, 0.99)
+lower <- rep(0.1, 12)  # 提高下界
+upper <- c(10, 10, rep(1, 8), 10, 0.9)  # 确保范围合理
+
+# 遍历参数列表
+for (params in param_list) {
+  # 提取初始参数为数值向量
+  initial_params <- as.numeric(params)  # 确保是数值向量
+  
+  # 生成模拟数据 (这里使用实际数据替代，若有生成函数请替换)
+  Y_simulated <- Y_actual
+  
+  # 执行 MLE 优化
+  mle_result <- optim(
+    par = initial_params,
+    fn = bivariate_neg_binom_log_likelihood,
+    Y = Y_simulated,
+    n = nrow(Y_simulated),
+    method = "L-BFGS-B",
+    lower = lower,
+    upper = upper
+  )
+  
+  # 获取结果
+  mle_estimates <- mle_result$par
+  mse <- (mle_estimates - initial_params)^2
+  
+  # 输出结果
+  cat("\n======================\n")
+  cat("Params:", paste(initial_params, collapse = ", "), "\nSample Size (n):", nrow(Y_simulated), "\n")
+  cat("MLE Results:\n")
+  print(mle_estimates)
+  cat("MSE Results:\n")
+  print(mse)
+  cat("======================\n")
+}
+
+
+```
+
+
+```{r}
+library(ggplot2)
+
+# 提取 Brooklyn 和 Manhattan 数据
+accidents_data <- daily_borough_stats1[, c("BROOKLYN", "MANHATTAN")]
+
+# 检查数据
+print(head(accidents_data))
+# 标准化数据
+accidents_scaled <- scale(accidents_data)
+
+# 进行 PCA
+pca_result <- prcomp(accidents_scaled, center = TRUE, scale. = TRUE)
+
+# 查看主成分结果
+summary(pca_result)
+# 提取 PCA 转换后的主成分数据
+pca_data <- as.data.frame(pca_result$x)
+
+# 添加日期信息
+pca_data$CRASH.DATE <- daily_borough_stats1$CRASH.DATE
+
+# 绘制主成分分布图
+ggplot(pca_data, aes(x = PC1, y = PC2)) +
+  geom_point(aes(color = CRASH.DATE), size = 2, alpha = 0.8) +
+  labs(title = "PCA of Traffic Accidents in Brooklyn and Manhattan",
+       x = "Principal Component 1",
+       y = "Principal Component 2",
+       color = "Date") +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+```
+
+
+```{r}
+# Extract Brooklyn and Manhattan series
+brooklyn_series <- daily_borough_stats1$BROOKLYN
+manhattan_series <- daily_borough_stats1$MANHATTAN
+
+# Plot ACF and PACF for Brooklyn
+par(mfrow = c(2, 1))  # Set layout to show two plots in one figure
+acf(brooklyn_series, main = "ACF of Traffic Accidents in Brooklyn")
+pacf(brooklyn_series, main = "PACF of Traffic Accidents in Brooklyn")
+
+# Plot ACF and PACF for Manhattan
+par(mfrow = c(2, 1))  # Reset layout
+acf(manhattan_series, main = "ACF of Traffic Accidents in Manhattan")
+pacf(manhattan_series, main = "PACF of Traffic Accidents in Manhattan")
+
+
+```
+
+
+
+
+

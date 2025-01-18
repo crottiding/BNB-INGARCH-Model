@@ -1,0 +1,158 @@
+---
+title: "bnb并行运算两行版最终版"
+author: "DDD"
+date: "2024-12-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+# 加载必要的包
+library(doParallel)
+library(foreach)
+
+# 定义三个参数集
+param_list <- list(
+  c(3.0, 2.0, 0.3, 0.1, 0.4, 0.3, 0.3, 0.2, 0.1, 0.2, 0.1, 0.5),
+  c(2.7, 1.5, 0.2, 0.1, 0.4, 0.3, 0.2, 0.2, 0.1, 0.3, 0.1, 0.5),
+  c(2.7, 1.5, 0.3, 0.1, 0.4, 0.3, 0.3, 0.2, 0.1, 0.2, 0.1, 0.5)
+)
+
+# 样本大小
+n_values <- c(100, 200, 500)
+
+# Monte Carlo 模拟次数
+n_simulations <- 1000
+
+# 定义模拟数据生成函数
+run_simulation <- function(n, params, sim) {
+  delta <- matrix(params[1:2], nrow = 2)  # delta 参数
+  A <- matrix(params[3:6], nrow = 2, byrow = TRUE)  # A 矩阵
+  B <- matrix(params[7:10], nrow = 2, byrow = TRUE)  # B 矩阵
+  mu_0 <- params[11]
+  P <- params[12]
+  
+  mu <- matrix(0, nrow = 2, ncol = n)  # 均值矩阵，2 行 n 列
+  Y <- matrix(0, nrow = 2, ncol = n)  # 响应矩阵，2 行 n 列
+  
+  # 设置随机数种子
+  set.seed(123 + sim)
+  
+  # 初始化第一个时间点的 X 和 Y
+  X0 <- rnbinom(1, size = mu_0 * P / (1 - P), prob = P)
+  X1 <- rnbinom(1, size = params[1] * P / (1 - P), prob = P)  # 使用 delta[1] 初始化
+  X2 <- rnbinom(1, size = params[2] * P / (1 - P), prob = P)  # 使用 delta[2] 初始化
+  
+  Y[1, 1] <- X1 + X0
+  Y[2, 1] <- X2 + X0
+  mu[, 1] <- delta + c(mu_0, mu_0)  # 初始均值
+
+  # 从 t=2 开始递归更新
+  for (t in 2:n) {
+    X0 <- rnbinom(1, size = mu_0 * P / (1 - P), prob = P)
+    X1 <- rnbinom(1, size = mu[1, t-1] * P / (1 - P), prob = P)
+    X2 <- rnbinom(1, size = mu[2, t-1] * P / (1 - P), prob = P)
+    
+    Y[1, t] <- X1 + X0
+    Y[2, t] <- X2 + X0
+    mu[, t] <- delta + A %*% mu[, t-1] + B %*% Y[, t-1]
+  }
+  
+  return(Y)
+}
+
+
+bivariate_neg_binom_log_likelihood <- function(params, Y, n) {
+  delta <- matrix(params[1:2], nrow = 2)
+  A <- matrix(params[3:6], nrow = 2, byrow = TRUE)
+  B <- matrix(params[7:10], nrow = 2, byrow = TRUE)
+  mu_0 <- params[11]
+  P <- params[12]
+  
+  mu <- matrix(0, nrow = 2, ncol = n)
+  log_likelihood <- 0
+  
+  for (t in 2:n) {
+    mu[, t] <- pmax(delta + A %*% mu[, t-1] + B %*% Y[, t-1], 1e-6)
+    joint_prob <- 0
+    for (k in 0:min(Y[1, t], Y[2, t])) {
+      p_x0 <- dnbinom(k, size = max(mu_0 * P / (1 - P), 1e-6), prob = P)
+      p_x1 <- dnbinom(Y[1, t] - k, size = max((mu[1, t] - mu_0) * P / (1 - P), 1e-6), prob = P)
+      p_x2 <- dnbinom(Y[2, t] - k, size = max((mu[2, t] - mu_0) * P / (1 - P), 1e-6), prob = P)
+      joint_prob <-  p_x0 * p_x1 * p_x2
+    }
+    log_likelihood <- log(max(joint_prob, 1e-10))
+  }
+  
+  return(-log_likelihood)
+}
+
+# 并行设置
+cores <- detectCores() - 1  # 留一个核心供系统使用
+registerDoParallel(cores)
+
+# 主循环：并行化 Monte Carlo 模拟
+for (params in param_list) {
+  for (n in n_values) {
+    # 初始化存储
+    all_mle_estimates <- foreach(sim = 1:n_simulations, .combine = rbind, .packages = "stats") %dopar% {
+      Y_simulated <- run_simulation(n, params, sim)
+      
+      # 设置初始参数和边界
+      initial_params <- params + runif(length(params), min = -0.5, max = 0.5)
+      lower <- c(0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.001, 0.001)
+      upper <- c(Inf, Inf, 1, 1, 1, 1, 1, 1, 1, 1, 5, 0.95)
+      
+      # 执行 MLE 优化
+      mle_result <- tryCatch({
+        optim(
+          par = initial_params,
+          fn = bivariate_neg_binom_log_likelihood,
+          Y = Y_simulated,
+          n = n,
+          method = "L-BFGS-B",
+          lower = lower,
+          upper = upper
+        )$par
+      }, error = function(e) {
+        # 如果优化失败，返回默认值（例如，初始参数）
+        initial_params
+      })
+      
+      return(mle_result)
+    }
+    
+    # 确保输出是矩阵
+    if (!is.matrix(all_mle_estimates)) {
+      all_mle_estimates <- matrix(unlist(all_mle_estimates), ncol = length(params), byrow = TRUE)
+    }
+    
+    # 计算平均结果
+    avg_mle_estimates <- colMeans(all_mle_estimates)
+    avg_mse_results <- colMeans((all_mle_estimates - matrix(rep(params, n_simulations), nrow = n_simulations, byrow = TRUE))^2)
+    
+    # 输出结果
+    cat("\n======================\n")
+    cat("Params:", paste(params, collapse = ", "), "\nSample Size (n):", n, "\n")
+    cat("n_simulations:", n_simulations, "\n")
+    cat("Average MLE Results:\n")
+    print(avg_mle_estimates)
+    cat("Average MSE Results:\n")
+    print(avg_mse_results)
+    cat("======================\n")
+  }
+}
+
+# 停止并行计算
+stopImplicitCluster()
+
+```
+
+
+
+
