@@ -35,6 +35,8 @@ run_simulation <- function(n, params, sim) {
   A <- matrix(params[3:6], nrow = 2, byrow = TRUE)  # A 矩阵
   B <- matrix(params[7:10], nrow = 2, byrow = TRUE)  # B 矩阵
   mu_0 <- params[11]
+  mu_1 <- params[1]
+  mu_2 <- params[2]
   P <- params[12]
   
   mu <- matrix(0, nrow = 2, ncol = n)  # 均值矩阵，2 行 n 列
