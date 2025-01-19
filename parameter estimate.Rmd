@@ -50,7 +50,7 @@ run_simulation <- function(n, params, sim) {
   
   Y[1, 1] <- X1 + X0
   Y[2, 1] <- X2 + X0
-  mu[, 1] <- delta + c(mu_0, mu_0)  # 初始均值
+  mu[, 1] <- delta + c(mu_0 + mu_1, mu_0 + mu_2)  # 初始均值
 
   # 从 t=2 开始递归更新
   for (t in 2:n) {
