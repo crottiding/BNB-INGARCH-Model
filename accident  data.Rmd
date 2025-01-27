@@ -9,6 +9,8 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+##数据处理
+
 ```{r}
 
 library(dplyr)
@@ -78,6 +80,7 @@ print(manhattan_mean)
 ```
 
 
+#BNB-INGARCH模型
 
 ```{r}
 # Extract traffic accident data for Brooklyn and Manhattan
@@ -175,8 +178,18 @@ for (params in param_list) {
 }
 
 
+
+
+# 计算 AIC
+log_likelihood_max <- -mle_result$value
+aic_value <- 2 * 12 - 2 * log_likelihood_max
+cat("AIC for Bivariate Negative Binomial INGARCH Model:", aic_value, "\n")
+
 ```
 
+
+
+##PCA图
 
 ```{r}
 library(ggplot2)
@@ -212,6 +225,7 @@ ggplot(pca_data, aes(x = PC1, y = PC2)) +
 
 ```
 
+##acf pacf 图
 
 ```{r}
 # Extract Brooklyn and Manhattan series
@@ -230,6 +244,56 @@ pacf(manhattan_series, main = "PACF of Traffic Accidents in Manhattan")
 
 
 ```
+
+
+##poisson 模型
+
+```{r}
+bivariate_poisson_ingarch_log_likelihood <- function(params, Y, n) {
+    lambda <- matrix(0, nrow = n, ncol = 2)
+    log_likelihood <- 0
+    
+    alpha <- matrix(params[1:4], nrow = 2, byrow = TRUE)
+    beta <- matrix(params[5:8], nrow = 2, byrow = TRUE)
+    
+    lambda[1,] <- apply(Y, 2, mean)  # 初始值设为平均数，避免过小
+    
+    for (t in 2:n) {
+        lambda[t,] <- alpha %*% Y[t-1,] + beta %*% lambda[t-1,]
+        # 添加条件防止计算对数(0)
+        lambda[t,] <- pmax(lambda[t,], .Machine$double.eps)  
+        log_likelihood <- log_likelihood + sum(dpois(Y[t,], lambda = lambda[t,], log = TRUE))
+    }
+    
+    return(-log_likelihood)
+}
+initial_params <- c(0.3, 0.1, 0.4, 0.3, 0.3, 0.2, 0.1, 0.2)
+lower <- rep(0.01, 8)  # 设置一个小的正数，避免精确为0
+upper <- rep(0.99, 8)  # 避免参数值达到1
+
+# 使用optim进行参数估计
+optim_result <- optim(
+    par = initial_params,  # 这些是您选择的模型参数的初始估计值
+    fn = bivariate_poisson_ingarch_log_likelihood,  # 模型的对数似然函数
+    Y = as.matrix(daily_borough_stats1[, c("BROOKLYN", "MANHATTAN")]),
+    n = nrow(daily_borough_stats1),
+    method = "L-BFGS-B",
+    lower = rep(0, 8),
+    upper = rep(1, 8)
+)
+
+# 计算AIC
+aic_value <- 2 * length(initial_params) - 2 * (-optim_result$value)
+print(paste("AIC for Bivariate Poisson INGARCH Model:", aic_value))
+
+
+```
+
+
+
+
+
+
 
 
 
